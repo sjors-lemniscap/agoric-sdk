@@ -10,6 +10,7 @@ import { E } from '@agoric/eventual-send';
 import { makePluginManager } from '@agoric/swingset-vat/src/vats/plugin-manager';
 import { GCI } from './gci';
 import { makeBridgeManager } from './bridge';
+import { makeRendezvousMaker } from './rendezvous';
 
 const NUM_IBC_PORTS = 3;
 
@@ -71,8 +72,10 @@ export function buildRootObject(vatPowers, vatParameters) {
       ),
     );
 
+    const makeRendezvous = makeRendezvousMaker();
+
     return harden({
-      async createUserBundle(_nickname, powerFlags = []) {
+      async createUserBundle(_nickname, addr, powerFlags = []) {
         // Bind to some fresh ports (unspecified name) on the IBC implementation
         // and provide them for the user to have.
         const ibcport = [];
@@ -114,6 +117,7 @@ export function buildRootObject(vatPowers, vatParameters) {
           },
         };
 
+        const rendezvous = makeRendezvous(addr);
         const bundle = harden({
           ...additionalPowers,
           chainTimerService,
@@ -123,6 +127,7 @@ export function buildRootObject(vatPowers, vatParameters) {
           ibcport,
           registrar: registry,
           registry,
+          rendezvous,
           board,
           zoe,
         });
@@ -357,26 +362,28 @@ export function buildRootObject(vatPowers, vatParameters) {
           // Allow some hardcoded client address connections into the chain.
           // This is necessary for fake-chain, which does not have Cosmos SDK
           // transactions to provision its client.
-          const demoProvider = harden({
-            // build a chain-side bundle for a client.
-            async getDemoBundle(nickname) {
-              if (giveMeAllTheAgoricPowers) {
-                // NOTE: This is a special exception to the security model,
-                // to give capabilities to all clients (since we are running
-                // locally with the `--give-me-all-the-agoric-powers` flag).
-                return chainBundler.createUserBundle(nickname, [
-                  'agoric.vattp',
-                ]);
-              }
-              return chainBundler.createUserBundle(nickname);
-            },
-          });
           await Promise.all(
             hardcodedClientAddresses.map(async addr => {
               const { transmitter, setReceiver } = await E(
                 vats.vattp,
               ).addRemote(addr);
               await E(vats.comms).addRemote(addr, transmitter, setReceiver);
+
+              const demoProvider = harden({
+                // build a chain-side bundle for a client.
+                async getDemoBundle(nickname) {
+                  if (giveMeAllTheAgoricPowers) {
+                    // NOTE: This is a special exception to the security model,
+                    // to give capabilities to all clients (since we are running
+                    // locally with the `--give-me-all-the-agoric-powers` flag).
+                    return chainBundler.createUserBundle(nickname, addr, [
+                      'agoric.vattp',
+                    ]);
+                  }
+                  return chainBundler.createUserBundle(nickname, addr, []);
+                },
+              });
+
               await E(vats.comms).addEgress(
                 addr,
                 PROVISIONER_INDEX,
